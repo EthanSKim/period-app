@@ -92,32 +92,3 @@ class PredictionResponse(BaseModel):
     predicted_ovulation_date: date | None = None
     fertile_window_start: date | None = None
     fertile_window_end: date | None = None
-
-
-# ── Web Push / VAPID schemas ──────────────────────────────────────────────────
-
-
-class PushKeysSchema(BaseModel):
-    p256dh: str
-    auth: str
-
-
-class PushSubscriptionCreate(BaseModel):
-    endpoint: str
-    keys: PushKeysSchema
-
-
-class PushSubscriptionDelete(BaseModel):
-    endpoint: str
-
-
-class PushSubscriptionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    endpoint: str
-    p256dh_key: str
-    auth_key: str
-    created_at: datetime
-    updated_at: datetime
