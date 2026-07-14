@@ -2,12 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/period_app_icon_flower.svg" />
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="theme-color" content="#f43f5e" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>period.</title>
+    <title>frontend</title>
   </head>
   <body>
     <div id="root"></div>
@@ -15,14 +12,15 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
+          navigator.serviceWorker
+            .register('/sw.js')
             .then((reg) => {
-              console.log('Service Worker registered with scope:', reg.scope);
+              console.log('Service Worker registered with scope:', reg.scope)
             })
             .catch((err) => {
-              console.error('Service Worker registration failed:', err);
-            });
-        });
+              console.error('Service Worker registration failed:', err)
+            })
+        })
       }
     </script>
   </body>
