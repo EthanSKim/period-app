@@ -7,8 +7,9 @@ from fastapi.responses import JSONResponse
 from app.api.auth import router as auth_router
 from app.api.cycles import router as cycles_router
 from app.api.predictions import router as predictions_router
+from app.api.push import router as push_router
 from app.database import Base, engine
-from app.models import User  # noqa: F401
+from app.models import PushSubscription, User  # noqa: F401
 
 # Create database tables at startup
 Base.metadata.create_all(bind=engine)
@@ -38,6 +39,7 @@ async def validation_exception_handler(request, exc: RequestValidationError):
 app.include_router(auth_router)
 app.include_router(cycles_router)
 app.include_router(predictions_router)
+app.include_router(push_router)
 
 
 @app.get("/")
