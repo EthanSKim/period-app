@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -10,8 +11,14 @@ from app.schemas import (
     PushSubscriptionDelete,
     PushSubscriptionResponse,
 )
+from app.services.push_service import send_web_push
 
 router = APIRouter(prefix="/push", tags=["push"])
+
+
+class PushTestPayload(BaseModel):
+    title: str = "Test Notification"
+    body: str = "This is a test notification from Period App!"
 
 
 @router.get("/vapid-public-key")
@@ -108,3 +115,47 @@ def get_subscriptions(
         .filter(PushSubscription.user_id == current_user.id)
         .all()
     )
+
+
+@router.post("/send-test")
+def send_test_notification(
+    payload: PushTestPayload = PushTestPayload(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send a test notification immediately to all active subscriptions
+    of the requesting user.
+    """
+    subscriptions = (
+        db.query(PushSubscription)
+        .filter(PushSubscription.user_id == current_user.id)
+        .all()
+    )
+
+    if not subscriptions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active push subscriptions found for this user",
+        )
+
+    success_count = 0
+    for sub in subscriptions:
+        success = send_web_push(
+            db,
+            sub,
+            {
+                "title": payload.title,
+                "body": payload.body,
+                "icon": "/icon-192.png",
+            },
+        )
+        if success:
+            success_count += 1
+
+    return {
+        "message": (
+            f"Dispatched test notifications to {success_count}/"
+            f"{len(subscriptions)} subscriptions"
+        )
+    }

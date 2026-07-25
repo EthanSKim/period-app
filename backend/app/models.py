@@ -84,3 +84,29 @@ class PushSubscription(Base):
     )
 
     user = relationship("User", back_populates="push_subscriptions")
+
+
+class NotificationLog(Base):
+    __tablename__ = "notification_logs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "notification_type",
+            "cycle_reference_date",
+            name="uix_user_type_ref_date",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # "period_1_day", "period_3_days", "fertile_1_day"
+    notification_type = Column(String, nullable=False)
+    cycle_reference_date = Column(Date, nullable=False)
+    sent_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    user = relationship("User")

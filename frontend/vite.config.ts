@@ -28,6 +28,10 @@ export default defineConfig(({ mode }) => {
           target: apiUrl,
           changeOrigin: true,
         },
+        '/push': {
+          target: apiUrl,
+          changeOrigin: true,
+        },
       },
     },
   }

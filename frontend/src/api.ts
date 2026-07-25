@@ -85,6 +85,10 @@ export const authService = {
       throw new Error(errorMsg)
     }
 
+    if (response.status === 204) {
+      return {} as T
+    }
+
     return response.json() as Promise<T>
   },
 
@@ -145,4 +149,27 @@ export const authService = {
     return this.request<PredictionResponse>(url)
   },
 
+  async getVapidPublicKey(): Promise<{ public_key: string }> {
+    return this.request<{ public_key: string }>('/push/vapid-public-key')
+  },
+
+  async subscribePush(subscription: any): Promise<any> {
+    return this.request<any>('/push/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(subscription),
+    })
+  },
+
+  async unsubscribePush(endpoint: string): Promise<any> {
+    return this.request<any>('/push/subscribe', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ endpoint }),
+    })
+  },
 }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>period. — Cycle Tracker</title>
   </head>
   <body>
     <div id="root"></div>
@@ -13,12 +13,15 @@
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker
-            .register('/sw.js')
+            .register('/sw.js', { updateViaCache: 'none' })
             .then((reg) => {
-              console.log('Service Worker registered with scope:', reg.scope)
+              console.log('[SW] Registered, scope:', reg.scope)
+              // Trigger an update check on every page load so SW changes
+              // (e.g. new push handler logic) reach users quickly.
+              reg.update()
             })
             .catch((err) => {
-              console.error('Service Worker registration failed:', err)
+              console.error('[SW] Registration failed:', err)
             })
         })
       }

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -9,12 +11,21 @@ from app.api.cycles import router as cycles_router
 from app.api.predictions import router as predictions_router
 from app.api.push import router as push_router
 from app.database import Base, engine
-from app.models import PushSubscription, User  # noqa: F401
+from app.models import NotificationLog, PushSubscription, User  # noqa: F401
+from app.services.scheduler import shutdown_scheduler, start_scheduler
 
 # Create database tables at startup
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Period App API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    shutdown_scheduler()
+
+
+app = FastAPI(title="Period App API", version="1.0.0", lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(

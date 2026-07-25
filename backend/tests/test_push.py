@@ -8,6 +8,8 @@ Endpoints under test:
   GET  /push/subscriptions
 """
 
+from unittest.mock import MagicMock, patch
+
 from app.core.config import settings
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -297,3 +299,283 @@ def test_list_subscriptions_returns_all_for_user(client) -> None:
         assert "auth_key" in item
         assert "created_at" in item
         assert "updated_at" in item
+
+
+# ── POST /push/send-test ──────────────────────────────────────────────────────
+
+
+def test_send_test_fails_no_subscriptions(client) -> None:
+    headers = get_auth_headers(client, email="no_subs_test@example.com")
+    response = client.post("/push/send-test", headers=headers)
+    assert response.status_code == 400
+    assert "No active push subscriptions" in response.json()["detail"]
+
+
+@patch("app.services.push_service.webpush")
+def test_send_test_success_with_subscriptions(mock_webpush, client) -> None:
+    headers = get_auth_headers(client, email="has_subs_test@example.com")
+
+    # Create subscription
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/test"),
+        headers=headers,
+    )
+
+    response = client.post(
+        "/push/send-test",
+        json={"title": "Hello", "body": "World"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "Dispatched test notifications to 1/1" in response.json()["message"]
+    assert mock_webpush.called
+
+
+# ── run_daily_notifications_job ───────────────────────────────────────────────
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_job_scenarios(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.models import NotificationLog
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+
+    # User 1: 1 cycle, prediction starting in 1 day, active subscription
+    # (Should notify)
+    headers_1 = get_auth_headers(client, email="user1@example.com")
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=27)).isoformat()},
+        headers=headers_1,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/user1"),
+        headers=headers_1,
+    )
+
+    # User 2: 1 cycle, prediction starting in 3 days, active subscription
+    # (Should notify)
+    headers_2 = get_auth_headers(client, email="user2@example.com")
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=25)).isoformat()},
+        headers=headers_2,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/user2"),
+        headers=headers_2,
+    )
+
+    # User 3: 1 cycle, fertile window starting in 1 day -> Should notify
+    # For 1 cycle (population average 28 days), predicted next start is start_date + 28.
+    # Ovulation is start_date + 28 - 14 = start_date + 14.
+    # Fertile starts at ovulation - 5 = start_date + 9.
+    # We want fertile_start (start_date + 9) to be today + 1 (tomorrow).
+    # So start_date + 9 = today + 1 => start_date = today - 8.
+    headers_3 = get_auth_headers(client, email="user3@example.com")
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=8)).isoformat()},
+        headers=headers_3,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/user3"),
+        headers=headers_3,
+    )
+
+    # User 4: prediction starting in 1 day, active subscription,
+    # but 0 cycles -> Should NOT notify
+    headers_4 = get_auth_headers(client, email="user4@example.com")
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/user4"),
+        headers=headers_4,
+    )
+
+    # Run the job
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    # Verify notifications sent to user 1, 2, 3
+    # User 1: period_1_day. User 2: period_3_days. User 3: fertile_1_day.
+    assert mock_webpush.call_count == 3
+
+    # Check notification logs were created
+    logs = session.query(NotificationLog).all()
+    assert len(logs) == 3
+    log_types = {log_entry.notification_type for log_entry in logs}
+    assert log_types == {"period_1_day", "period_3_days", "fertile_1_day"}
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_job_prevents_duplicate_sends(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="duplicate_test@example.com")
+
+    # Log 1 cycle (prediction starting in 1 day)
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=27)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/dup"),
+        headers=headers,
+    )
+
+    # First run -> Should notify
+    run_daily_notifications_job()
+    assert mock_webpush.call_count == 1
+
+    # Second run -> Should NOT notify (duplicate check)
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+    assert mock_webpush.call_count == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_job_cleanup_on_410_gone(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from pywebpush import WebPushException
+
+    from app.models import PushSubscription
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="cleanup_test@example.com")
+
+    # Log 1 cycle
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=27)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/gone"),
+        headers=headers,
+    )
+
+    # Mock webpush to throw 410 Gone Exception
+    # Create mock response object
+    mock_response = MagicMock()
+    mock_response.status_code = 410
+    mock_webpush.side_effect = WebPushException("Gone", response=mock_response)
+
+    # Run the job
+    run_daily_notifications_job()
+
+    # The subscription should have been cleaned up/deleted
+    subs = session.query(PushSubscription).all()
+    # Find if subscription with endpoint "gone" still exists
+    gone_sub = [s for s in subs if "gone" in s.endpoint]
+    assert len(gone_sub) == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_job_cleanup_on_404_not_found(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from pywebpush import WebPushException
+
+    from app.models import PushSubscription
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="cleanup_404@example.com")
+
+    # Log 1 cycle
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=27)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/notfound"),
+        headers=headers,
+    )
+
+    # Mock webpush to throw 404 Not Found Exception
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+    mock_webpush.side_effect = WebPushException("Not Found", response=mock_response)
+
+    # Run the job
+    run_daily_notifications_job()
+
+    # The subscription should have been cleaned up/deleted
+    subs = session.query(PushSubscription).all()
+    notfound_sub = [s for s in subs if "notfound" in s.endpoint]
+    assert len(notfound_sub) == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_job_no_cleanup_on_5xx_error(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from pywebpush import WebPushException
+
+    from app.models import PushSubscription
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="cleanup_500@example.com")
+
+    # Log 1 cycle
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=27)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/servererror"),
+        headers=headers,
+    )
+
+    # Mock webpush to throw 500 Internal Server Error
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_webpush.side_effect = WebPushException("Internal Server Error", response=mock_response)
+
+    # Run the job
+    run_daily_notifications_job()
+
+    # The subscription should NOT have been cleaned up/deleted
+    subs = session.query(PushSubscription).all()
+    servererror_sub = [s for s in subs if "servererror" in s.endpoint]
+    assert len(servererror_sub) == 1

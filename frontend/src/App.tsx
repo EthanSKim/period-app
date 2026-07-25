@@ -10,6 +10,7 @@ import { Register } from './components/Register'
 import { Home } from './components/Home'
 import { LogPeriod } from './components/LogPeriod'
 import { CalendarView } from './components/CalendarView'
+import { NotificationSettings } from './components/NotificationSettings'
 import { authService } from './api'
 import './App.css'
 
@@ -31,6 +32,7 @@ function App() {
         <Route path="/home" element={<Home />} />
         <Route path="/log-period" element={<LogPeriod />} />
         <Route path="/calendar" element={<CalendarView />} />
+        <Route path="/settings/notifications" element={<NotificationSettings />} />
         {/* Fallback route */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
