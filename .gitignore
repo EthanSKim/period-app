@@ -7,61 +7,117 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Diagnostic reports (https://nodejs.org/api/report.html)
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+node_modules
+dist
+dist-ssr
+*.local
 
-# Dependency directories
-node_modules/
-jspm_packages/
-
-# TypeScript vbuild cache
-*.tsbuildinfo
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Optional stylelint cache
-.stylelintcache
-
-# Output directory
-dist/
-build/
-out/
-
-# Python Cache & Bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-
-# Virtual Environments
-.venv/
-venv/
-ENV/
-env/
-
-# Environment Variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.example
-
-# OS Files
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
-
-# IDE Files
-.vscode/
-.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# =========================
+# Node / backend
+# =========================
+backend/node_modules/
+backend/npm-debug.log*
+backend/yarn-debug.log*
+backend/yarn-error.log*
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# =========================
+# Flutter / Dart / frontend
+# =========================
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.pub-cache/
+frontend/.pub/
+frontend/build/
+frontend/coverage/
+frontend/**/doc/api/
+
+# Symbolication / obfuscation output
+frontend/app.*.symbols
+frontend/app.*.map.json
+
+# Android
+frontend/android/app/debug
+frontend/android/app/profile
+frontend/android/app/release
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/**/GeneratedPluginRegistrant.java
+
+# iOS / macOS
+frontend/ios/Flutter/.last_build_id
+frontend/ios/Pods/
+frontend/ios/Flutter/Flutter.framework
+frontend/ios/Flutter/Flutter.podspec
+frontend/macos/Flutter/GeneratedPluginRegistrant.swift
+frontend/**/Pods/
+
+# Web build output (Docker image builds it fresh)
+frontend/web/build/
+
+# Linux / Windows desktop build artifacts
+frontend/linux/flutter/generated_plugin_registrant.*
+frontend/windows/flutter/generated_plugin_registrant.*
+
+# =========================
+# Docker / Postgres
+# =========================
+# Local bind-mounted Postgres data (if ever used instead of a named volume)
+pgdata/
+postgres-data/
+
+# Local docker env overrides
+.env
+.env.example
+.env.*.local
+docker-compose.override.yml
+
+# =========================
+# Editor / IDE
+# =========================
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+.atom/
+.history/
+
+# =========================
+# OS cruft
+# =========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# =========================
+# Misc
+# =========================
+*.class
+*.log
+*.pyc
+*.swp
+.build/
+.buildlog/
+.svn/
+.swiftpm/
+migrate_working_dir/
+

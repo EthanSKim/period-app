@@ -4,6 +4,12 @@ from datetime import date
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.constants import (
+    NOTIF_FERTILE_1_DAY,
+    NOTIF_LUTEAL_PHASE_HEADS_UP,
+    NOTIF_PERIOD_1_DAY,
+    NOTIF_PERIOD_3_DAYS,
+)
 from app.database import SessionLocal
 from app.models import Cycle, NotificationLog, PushSubscription, User
 from app.services.prediction_service import get_prediction
@@ -13,11 +19,62 @@ logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 
+# ── Notification payload definitions ─────────────────────────────────────────
+# Each tuple: (type_constant, days_ahead, title, body, deep_link_url)
+# "days_ahead" is compared against (reference_date - today).days.
+# The reference_date fed into duplicate-prevention is the prediction date that
+# triggered the notification (pred_start for period alerts; fertile_start for
+# fertile-window; pred_start again for luteal phase).
+
+_PERIOD_NOTIFICATIONS = [
+    (
+        NOTIF_PERIOD_1_DAY,
+        1,
+        "Period starting tomorrow",
+        "Your period is expected to start tomorrow.",
+        "/calendar",
+    ),
+    (
+        NOTIF_PERIOD_3_DAYS,
+        3,
+        "Period starting in 3 days",
+        "Your period is expected to start in 3 days.",
+        "/calendar",
+    ),
+    (
+        NOTIF_LUTEAL_PHASE_HEADS_UP,
+        8,
+        "Your body may need extra care this week",
+        (
+            "Your period is likely about a week away. The luteal phase can bring "
+            "mood shifts, fatigue, bloating, and cramps. It\u2019s a good time to slow "
+            "down, rest well, and be kind to yourself."
+        ),
+        "/calendar",
+    ),
+]
+
+_FERTILE_NOTIFICATIONS = [
+    (
+        NOTIF_FERTILE_1_DAY,
+        1,
+        "Fertile window starts tomorrow",
+        "Your fertile window is expected to start tomorrow.",
+        "/calendar",
+    ),
+]
+
 
 def run_daily_notifications_job():
     """
     Scheduled job that runs once daily (at 9 AM UTC).
     Evaluates prediction metrics for all subscribed users and sends pushes.
+
+    Notification triggers evaluated each run:
+      - period_1_day          : predicted period starts tomorrow
+      - period_3_days         : predicted period starts in 3 days
+      - luteal_phase_heads_up : predicted period starts in 8 days
+      - fertile_1_day         : fertile window starts tomorrow
     """
     logger.info("Starting daily notifications job...")
     db = SessionLocal()
@@ -26,13 +83,14 @@ def run_daily_notifications_job():
         users = db.query(User).join(PushSubscription).join(Cycle).distinct().all()
 
         users_evaluated = len(users)
-        notifications_sent = 0
+        period_sent = 0
+        fertile_sent = 0
+        luteal_sent = 0
         subscriptions_cleaned_up = 0
 
         today = date.today()
 
         for user in users:
-            # Get user's predictions
             cycles = (
                 db.query(Cycle)
                 .filter(Cycle.user_id == user.id)
@@ -47,46 +105,27 @@ def run_daily_notifications_job():
 
             notifications_to_send = []
 
-            # Check 1: Period starting tomorrow (1 day away) or in 3 days
+            # ── Period-anchored notifications (1 day, 3 days, 8 days) ────────
             if pred_start:
                 days_until_period = (pred_start - today).days
-                if days_until_period == 1:
-                    notifications_to_send.append(
-                        (
-                            "period_1_day",
-                            pred_start,
-                            "Period starting tomorrow",
-                            "Your period is expected to start tomorrow.",
-                            "/calendar",
+                for notif_type, days_ahead, title, body, url in _PERIOD_NOTIFICATIONS:
+                    if days_until_period == days_ahead:
+                        notifications_to_send.append(
+                            (notif_type, pred_start, title, body, url)
                         )
-                    )
-                elif days_until_period == 3:
-                    notifications_to_send.append(
-                        (
-                            "period_3_days",
-                            pred_start,
-                            "Period starting in 3 days",
-                            "Your period is expected to start in 3 days.",
-                            "/calendar",
-                        )
-                    )
 
-            # Check 2: Fertile window starts tomorrow (1 day away)
+            # ── Fertile-window notifications (1 day) ─────────────────────────
             if fertile_start:
                 days_until_fertile = (fertile_start - today).days
-                if days_until_fertile == 1:
-                    notifications_to_send.append(
-                        (
-                            "fertile_1_day",
-                            fertile_start,
-                            "Fertile window starts tomorrow",
-                            "Your fertile window is expected to start tomorrow.",
-                            "/calendar",
+                for notif_type, days_ahead, title, body, url in _FERTILE_NOTIFICATIONS:
+                    if days_until_fertile == days_ahead:
+                        notifications_to_send.append(
+                            (notif_type, fertile_start, title, body, url)
                         )
-                    )
 
+            # ── Send + log ───────────────────────────────────────────────────
             for notif_type, ref_date, title, body, url in notifications_to_send:
-                # Check for duplicate prevention
+                # Duplicate-send prevention
                 existing_log = (
                     db.query(NotificationLog)
                     .filter(
@@ -96,21 +135,17 @@ def run_daily_notifications_job():
                     )
                     .first()
                 )
-
                 if existing_log:
                     continue
 
-                # Fetch all push subscriptions for this user
                 subscriptions = (
                     db.query(PushSubscription)
                     .filter(PushSubscription.user_id == user.id)
                     .all()
                 )
-
                 if not subscriptions:
                     continue
 
-                # Send to all subscriptions of the user
                 send_success_any = False
                 for sub in subscriptions:
                     success = send_web_push(
@@ -126,7 +161,6 @@ def run_daily_notifications_job():
                     if success:
                         send_success_any = True
                     else:
-                        # Verify if subscription got deleted (404/410 Gone)
                         db.commit()
                         exists = (
                             db.query(PushSubscription)
@@ -137,7 +171,6 @@ def run_daily_notifications_job():
                             subscriptions_cleaned_up += 1
 
                 if send_success_any:
-                    # Log that we sent the notification successfully
                     log_entry = NotificationLog(
                         user_id=user.id,
                         notification_type=notif_type,
@@ -145,11 +178,20 @@ def run_daily_notifications_job():
                     )
                     db.add(log_entry)
                     db.commit()
-                    notifications_sent += 1
+
+                    if notif_type == NOTIF_LUTEAL_PHASE_HEADS_UP:
+                        luteal_sent += 1
+                    elif notif_type == NOTIF_FERTILE_1_DAY:
+                        fertile_sent += 1
+                    else:
+                        period_sent += 1
 
         logger.info(
-            f"Daily notifications job completed. "
-            f"Evaluated: {users_evaluated}, Sent: {notifications_sent}, "
+            "Daily notifications job completed. "
+            f"Evaluated: {users_evaluated}, "
+            f"Period: {period_sent}, "
+            f"Fertile: {fertile_sent}, "
+            f"Luteal: {luteal_sent}, "
             f"Cleaned up: {subscriptions_cleaned_up}"
         )
     except Exception as ex:

@@ -10,6 +10,12 @@ Endpoints under test:
 
 from unittest.mock import MagicMock, patch
 
+from app.constants import (
+    NOTIF_FERTILE_1_DAY,
+    NOTIF_LUTEAL_PHASE_HEADS_UP,
+    NOTIF_PERIOD_1_DAY,
+    NOTIF_PERIOD_3_DAYS,
+)
 from app.core.config import settings
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -394,28 +400,48 @@ def test_scheduler_job_scenarios(
         headers=headers_3,
     )
 
-    # User 4: prediction starting in 1 day, active subscription,
-    # but 0 cycles -> Should NOT notify
+    # User 4: 1 cycle, prediction starting in 8 days -> luteal_phase_heads_up
+    # pred_next = start_date + 28. We want pred_next - today = 8.
+    # start_date = today - 28 + 8 = today - 20.
     headers_4 = get_auth_headers(client, email="user4@example.com")
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=20)).isoformat()},
+        headers=headers_4,
+    )
     client.post(
         "/push/subscribe",
         json=make_subscription_payload(endpoint="https://example.com/push/user4"),
         headers=headers_4,
     )
 
+    # User 5: active subscription but 0 cycles -> Should NOT notify
+    headers_5 = get_auth_headers(client, email="user5@example.com")
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/user5"),
+        headers=headers_5,
+    )
+
     # Run the job
     mock_webpush.reset_mock()
     run_daily_notifications_job()
 
-    # Verify notifications sent to user 1, 2, 3
-    # User 1: period_1_day. User 2: period_3_days. User 3: fertile_1_day.
-    assert mock_webpush.call_count == 3
+    # Verify notifications sent to user 1, 2, 3, 4
+    # User 1: period_1_day. User 2: period_3_days.
+    # User 3: fertile_1_day. User 4: luteal_phase_heads_up.
+    assert mock_webpush.call_count == 4
 
     # Check notification logs were created
     logs = session.query(NotificationLog).all()
-    assert len(logs) == 3
+    assert len(logs) == 4
     log_types = {log_entry.notification_type for log_entry in logs}
-    assert log_types == {"period_1_day", "period_3_days", "fertile_1_day"}
+    assert log_types == {
+        NOTIF_PERIOD_1_DAY,
+        NOTIF_PERIOD_3_DAYS,
+        NOTIF_FERTILE_1_DAY,
+        NOTIF_LUTEAL_PHASE_HEADS_UP,
+    }
 
 
 @patch("app.services.scheduler.SessionLocal")
@@ -570,7 +596,9 @@ def test_scheduler_job_no_cleanup_on_5xx_error(
     # Mock webpush to throw 500 Internal Server Error
     mock_response = MagicMock()
     mock_response.status_code = 500
-    mock_webpush.side_effect = WebPushException("Internal Server Error", response=mock_response)
+    mock_webpush.side_effect = WebPushException(
+        "Internal Server Error", response=mock_response
+    )
 
     # Run the job
     run_daily_notifications_job()
@@ -579,3 +607,230 @@ def test_scheduler_job_no_cleanup_on_5xx_error(
     subs = session.query(PushSubscription).all()
     servererror_sub = [s for s in subs if "servererror" in s.endpoint]
     assert len(servererror_sub) == 1
+
+
+# ── Luteal phase heads-up notification ───────────────────────────────────────
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_sent_when_8_days_away(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """User whose predicted period is exactly 8 days away receives the luteal
+    notification."""
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.constants import NOTIF_LUTEAL_PHASE_HEADS_UP
+    from app.models import NotificationLog
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_8days@example.com")
+
+    # pred_next = start_date + 28 = today + 8  →  start_date = today - 20
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=20)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/luteal8"),
+        headers=headers,
+    )
+
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    assert mock_webpush.call_count == 1
+
+    logs = session.query(NotificationLog).all()
+    assert any(lg.notification_type == NOTIF_LUTEAL_PHASE_HEADS_UP for lg in logs)
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_not_sent_when_9_days_away(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """User whose predicted period is 9 days away does NOT receive the luteal
+    notification."""
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_9days@example.com")
+
+    # pred_next = start_date + 28 = today + 9  →  start_date = today - 19
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=19)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/luteal9"),
+        headers=headers,
+    )
+
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    assert mock_webpush.call_count == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_duplicate_prevention(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """Luteal phase notification is not sent twice for the same cycle_reference_date."""
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_dup@example.com")
+
+    # pred_next = today + 8  →  start_date = today - 20
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=20)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/lutealdup"),
+        headers=headers,
+    )
+
+    # First run → should send
+    run_daily_notifications_job()
+    assert mock_webpush.call_count == 1
+
+    # Second run → duplicate prevention blocks it
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+    assert mock_webpush.call_count == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_not_sent_when_7_days_away(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """User whose predicted period is 7 days away does NOT receive the luteal
+    notification."""
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_7days@example.com")
+
+    # pred_next = today + 7  →  start_date = today - 21
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=21)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/luteal7"),
+        headers=headers,
+    )
+
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    assert mock_webpush.call_count == 0
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_does_not_interfere_with_3day_alert(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """A user who is exactly 3 days from their period receives only
+    period_3_days and not luteal phase."""
+    mock_session_local.return_value = session
+    from datetime import date, timedelta
+
+    from app.constants import NOTIF_PERIOD_3_DAYS
+    from app.models import NotificationLog
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_interference@example.com")
+
+    # pred_next = today + 3  →  start_date = today - 25
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=25)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(endpoint="https://example.com/push/luteal_int"),
+        headers=headers,
+    )
+
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    # Should only call once for period_3_days
+    assert mock_webpush.call_count == 1
+
+    logs = session.query(NotificationLog).all()
+    assert len(logs) == 1
+    assert logs[0].notification_type == NOTIF_PERIOD_3_DAYS
+
+
+@patch("app.services.scheduler.SessionLocal")
+@patch("app.services.push_service.webpush")
+def test_scheduler_luteal_phase_payload_contents(
+    mock_webpush, mock_session_local, client, session
+) -> None:
+    """Luteal phase notification payload contains the correct title and body
+    text."""
+    mock_session_local.return_value = session
+    import json
+    from datetime import date, timedelta
+
+    from app.services.scheduler import run_daily_notifications_job
+
+    today = date.today()
+    headers = get_auth_headers(client, email="luteal_payload@example.com")
+
+    # pred_next = today + 8  →  start_date = today - 20
+    client.post(
+        "/cycles",
+        json={"start_date": (today - timedelta(days=20)).isoformat()},
+        headers=headers,
+    )
+    client.post(
+        "/push/subscribe",
+        json=make_subscription_payload(
+            endpoint="https://example.com/push/luteal_payload_ep"
+        ),
+        headers=headers,
+    )
+
+    mock_webpush.reset_mock()
+    run_daily_notifications_job()
+
+    assert mock_webpush.call_count == 1
+
+    # Check mock webpush payload argument
+    kwargs = mock_webpush.call_args.kwargs
+    data = json.loads(kwargs["data"])
+
+    assert "extra care" in data["title"]
+    assert "luteal phase" in data["body"].lower()
+    assert "slow down" in data["body"].lower()

@@ -18,6 +18,40 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 
 type NotificationState = 'enabled' | 'disabled' | 'blocked' | 'unsupported'
 
+interface NotificationTypeItem {
+  id: string
+  icon: string
+  title: string
+  description: string
+}
+
+const NOTIFICATION_TYPES: NotificationTypeItem[] = [
+  {
+    id: 'luteal_phase_heads_up',
+    icon: '🧠',
+    title: '8 days before your period — luteal phase heads-up',
+    description: 'The week before your period can bring mood changes, fatigue, and physical symptoms. This reminder helps you prepare.',
+  },
+  {
+    id: 'period_3_days',
+    icon: '🔔',
+    title: '3 days before your period',
+    description: 'Expected cycle starting in 3 days.',
+  },
+  {
+    id: 'period_1_day',
+    icon: '🔔',
+    title: '1 day before your period',
+    description: 'Expected cycle starting tomorrow.',
+  },
+  {
+    id: 'fertile_1_day',
+    icon: '🥚',
+    title: '1 day before your fertile window',
+    description: 'Fertile window starting tomorrow.',
+  },
+]
+
 export const NotificationSettings: React.FC = () => {
   const navigate = useNavigate()
   const [notifState, setNotifState] = useState<NotificationState>('disabled')
@@ -276,27 +310,15 @@ export const NotificationSettings: React.FC = () => {
               <div className="settings-details-section">
                 <h3 className="section-title">📬 Reminders you will receive:</h3>
                 <ul className="notif-features-list">
-                  <li>
-                    <span className="list-bullet">🔔</span>
-                    <div>
-                      <strong>3 Days Prior</strong>
-                      <p>Expected cycle starting in 3 days</p>
-                    </div>
-                  </li>
-                  <li>
-                    <span className="list-bullet">🔔</span>
-                    <div>
-                      <strong>1 Day Prior</strong>
-                      <p>Expected cycle starting tomorrow</p>
-                    </div>
-                  </li>
-                  <li>
-                    <span className="list-bullet">🥚</span>
-                    <div>
-                      <strong>Fertile Window Alert</strong>
-                      <p>Fertile window starting tomorrow</p>
-                    </div>
-                  </li>
+                  {NOTIFICATION_TYPES.map((type) => (
+                    <li key={type.id}>
+                      <span className="list-bullet">{type.icon}</span>
+                      <div>
+                        <strong>{type.title}</strong>
+                        <p>{type.description}</p>
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>
